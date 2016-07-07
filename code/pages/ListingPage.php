@@ -104,32 +104,38 @@ class ListingPage extends Page {
 
 		if ($this->ListType) {
 			$componentsManyMany = singleton($this->ListType)->config()->many_many;
+			if (!$componentsManyMany) {
+				$componentsManyMany = array();
+			}
 			$componentNames = array();
 			foreach ($componentsManyMany as $componentName => $className) {
 				$componentNames[$componentName] = FormField::name_to_label($componentName) . ' ('.$className.')';
 			}
-			$fields->addFieldToTab('Root.ListingSettings', DropdownField::create('ComponentFilterName', _t('ListingPage.RELATION_COMPONENT_NAME', 'Filter by Relation'), $componentNames)
-				->setEmptyString('(Select)')
-				->setRightTitle('Will cause this page to list items based on the last URL part. (ie. '.$this->AbsoluteLink().'{$componentFieldName})'));
-			$fields->addFieldToTab('Root.ListingSettings', $componentColumnField = DropdownField::create('ComponentFilterColumn', 'Filter by Relation Field')->setEmptyString('(Must select a relation and save)')); 
-			$fields->addFieldToTab('Root.ListingSettings', $componentListingField = DropdownField::create('ComponentListingTemplateID', _t('ListingPage.COMPONENT_CONTENT_TEMPLATE', 'Relation Listing Template'))->setEmptyString('(Must select a relation and save)'));
-			if ($this->ComponentFilterName) {
-				$componentClass = isset($componentsManyMany[$this->ComponentFilterName]) ? $componentsManyMany[$this->ComponentFilterName] : '';
-				if ($componentClass) {
-					$componentFields = array();
-					foreach ($this->getSelectableFields($componentClass) as $columnName => $type) {
-						$componentFields[$columnName] = $columnName;
-					}
-					$componentColumnField->setSource($componentFields);
-					$componentColumnField->setEmptyString('(Select)');
+			if ($componentNames)
+			{
+				$fields->addFieldToTab('Root.ListingSettings', DropdownField::create('ComponentFilterName', _t('ListingPage.RELATION_COMPONENT_NAME', 'Filter by Relation'), $componentNames)
+					->setEmptyString('(Select)')
+					->setRightTitle('Will cause this page to list items based on the last URL part. (ie. '.$this->AbsoluteLink().'{$componentFieldName})'));
+				$fields->addFieldToTab('Root.ListingSettings', $componentColumnField = DropdownField::create('ComponentFilterColumn', 'Filter by Relation Field')->setEmptyString('(Must select a relation and save)')); 
+				$fields->addFieldToTab('Root.ListingSettings', $componentListingField = DropdownField::create('ComponentListingTemplateID', _t('ListingPage.COMPONENT_CONTENT_TEMPLATE', 'Relation Listing Template'))->setEmptyString('(Must select a relation and save)'));
+				if ($this->ComponentFilterName) {
+					$componentClass = isset($componentsManyMany[$this->ComponentFilterName]) ? $componentsManyMany[$this->ComponentFilterName] : '';
+					if ($componentClass) {
+						$componentFields = array();
+						foreach ($this->getSelectableFields($componentClass) as $columnName => $type) {
+							$componentFields[$columnName] = $columnName;
+						}
+						$componentColumnField->setSource($componentFields);
+						$componentColumnField->setEmptyString('(Select)');
 
-					$componentListingField->setSource($templates);
-					$componentListingField->setHasEmptyDefault(false);
+						$componentListingField->setSource($templates);
+						$componentListingField->setHasEmptyDefault(false);
 
-					if (class_exists('KeyValueField'))
-					{
-						$fields->addFieldToTab('Root.ListingSettings', KeyValueField::create('ComponentFilterWhere', 'Constrain Relation By', $componentFields)
-							->setRightTitle("Filter '{$this->ComponentFilterName}' with these properties."));
+						if (class_exists('KeyValueField'))
+						{
+							$fields->addFieldToTab('Root.ListingSettings', KeyValueField::create('ComponentFilterWhere', 'Constrain Relation By', $componentFields)
+								->setRightTitle("Filter '{$this->ComponentFilterName}' with these properties."));
+						}
 					}
 				}
 			}
