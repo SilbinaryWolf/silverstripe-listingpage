@@ -87,7 +87,10 @@ class ListingPage extends Page {
 		$parentType = $this->parentType($sourceType);
 		if ($sourceType && $parentType) {
 			$fields->addFieldToTab('Root.ListingSettings', new DropdownField('Depth', _t('ListingPage.DEPTH', 'Depth'), array(1 => 1, 2 => 2, 3 => 3, 4 => 4, 5 => 5)));
-			$fields->addFieldToTab('Root.ListingSettings', new TreeDropdownField('ListingSourceID', _t('ListingPage.LISTING_SOURCE', 'Source of content for listing'), $parentType));
+			$fields->addFieldToTab('Root.ListingSettings', $lisingSourceIDField = TreeDropdownField::create('ListingSourceID', _t('ListingPage.LISTING_SOURCE', 'Source of content for listing'), $parentType));
+			if ($parentType === 'SiteTree') {
+				$lisingSourceIDField->setRightTitle('Only list pages underneath this selected page.');
+			}
 			$fields->addFieldToTab('Root.ListingSettings', new CheckboxField('ClearSource', _t('ListingPage.CLEAR_SOURCE', 'Clear listing source value')));
 		}
 
@@ -208,12 +211,27 @@ class ListingPage extends Page {
 	 */
 	public function ComponentListingItems() {
 		$tagClass = isset(singleton($this->ListType)->config()->many_many[$this->ComponentFilterName]) ? singleton($this->ListType)->config()->many_many[$this->ComponentFilterName] : null;
+		if (!$tagClass) {
+			return null;
+		}
 		$result = DataList::create($tagClass);
 		if ($this->ComponentFilterWhere && ($componentWhereFilters = $this->ComponentFilterWhere->getValue()))
 		{
 			$result = $result->filter($componentWhereFilters);
 		}
 		return $result;
+	}
+
+	/**
+	 * @return DataObject
+	 */
+	public function ComponentListingItemByFilterColumn($name) {
+		$tags = $this->ComponentListingItems();
+		if (!$tags) {
+			return null;
+		}
+		$tags = $tags->filter(array($this->ComponentFilterColumn => $name));
+		return $tags->first();
 	}
 
 	/**
@@ -269,21 +287,24 @@ class ListingPage extends Page {
 			$tags = array();
 			if ($controller && $controller instanceof ListingPage_Controller)
 			{
-				$tagName = $controller->getRequest()->latestParam('Action');
+				$allParams = $controller->getRequest()->allParams();
+				$tagName = isset($allParams['Action']) ? $allParams['Action'] : null;
 
 				if ($tagName) {
 					$tags = $this->ComponentListingItems();
-					$tags = $tags->filter(array($this->ComponentFilterColumn => $tagName));
-					
-					$tags = $tags->toArray();
-					if (!$tags)
-					{
-						// Workaround cms/#1045
-		                // - Stop infinite redirect
-		                // @see: https://github.com/silverstripe/silverstripe-cms/issues/1045
-						unset($controller->extension_instances['OldPageRedirector']);
+					if ($tags) {
+						$tags = $tags->filter(array($this->ComponentFilterColumn => $tagName));
+						
+						$tags = $tags->toArray();
+						if (!$tags)
+						{
+							// Workaround cms/#1045
+			                // - Stop infinite redirect
+			                // @see: https://github.com/silverstripe/silverstripe-cms/issues/1045
+							unset($controller->extension_instances['OldPageRedirector']);
 
-						return $controller->httpError(404);
+							return $controller->httpError(404);
+						}
 					}
 				}
 			}
@@ -345,26 +366,37 @@ class ListingPage extends Page {
 	}
 
 	public function Content() {
-		$action = (Controller::has_curr()) ? Controller::curr()->getRequest()->latestParam('Action') : null;
-		if ($this->ComponentFilterName && !$action) {
-			// For a list of relations like tags/categories/etc
-			$items = $this->ComponentListingItems();
-			$item = $this->customise(array('Items' => $items));
-			$view = SSViewer::fromString($this->ComponentListingTemplate()->ItemTemplate);
-		} else {
-			$items = $this->ListingItems();
-			$item = $this->customise(array('Items' => $items));
-			$view = SSViewer::fromString($this->ListingTemplate()->ItemTemplate);
-		}
-		$content = str_replace('<p>$Listing</p>', '$Listing', $this->Content);
+		return static::render_listing_with_content($this, $this->ListingItems());
+	}
+
+	public static function render_listing_with_content($recordOrController, $list) {
+		$item = $recordOrController->customise(array('Items' => $list));
+		$view = SSViewer::fromString($recordOrController->ListingTemplate()->ItemTemplate);
+		$content = str_replace('<p>$Listing</p>', '$Listing', $recordOrController->Content);
 		return str_replace('$Listing', $view->process($item), $content);
 	}
 }
 
 class ListingPage_Controller extends Page_Controller {
-	private static $url_handlers = array(
-		'$Action' => 'index'
-	);
+	public function handleRequest(SS_HTTPRequest $request, DataModel $model = NULL) {
+		$dirParts = explode('/', $request->remaining());
+		if (!$dirParts) {
+			return parent::handleRequest($request, $model);
+		}
+		$action = $dirParts[0];
+		if($this->hasAction($action)) {
+			// Use existing action instead of tags
+			// ie. 'Form'
+			return parent::handleRequest($request, $model);
+		}
+		$tag = $this->ComponentListingItemByFilterColumn($action);
+		if ($tag) 
+		{
+			// If tag found, shift so that the request succeeds.
+			$request->shift();
+		}
+		return parent::handleRequest($request, $model);
+	}
 
 	public function index() {
 		if (($this->data()->ContentType || $this->data()->CustomContentType)) {
@@ -375,5 +407,17 @@ class ListingPage_Controller extends Page_Controller {
 			return $this->data()->Content();
 		}
 		return array();
+	}
+
+	public function Content() {
+		$allParams = $this->getRequest()->allParams();
+		$action = isset($allParams['Action']) ? $allParams['Action'] : null;
+		if (!$action && $this->ComponentFilterName) {
+			// For a list of relations like tags/categories/etc
+			$items = $this->ComponentListingItems();
+		} else {
+			$items = $this->ListingItems();
+		}
+		return ListingPage::render_listing_with_content($this, $items);
 	}
 }
