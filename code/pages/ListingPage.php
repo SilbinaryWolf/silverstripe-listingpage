@@ -225,13 +225,13 @@ class ListingPage extends Page {
 	/**
 	 * @return DataObject
 	 */
-	public function ComponentListingItemByFilterColumn($name) {
+	public function ComponentListingItemsByFilterColumn($name) {
 		$tags = $this->ComponentListingItems();
 		if (!$tags) {
 			return null;
 		}
 		$tags = $tags->filter(array($this->ComponentFilterColumn => $name));
-		return $tags->first();
+		return $tags;
 	}
 
 	/**
@@ -283,42 +283,18 @@ class ListingPage extends Page {
 
 
 		if ($this->ComponentFilterName) {
+			/**
+			 * @var ListingPage_Controller
+			 */
 			$controller = (Controller::has_curr()) ? Controller::curr() : null;
-			$tags = array();
+			$tag = null;
 			if ($controller && $controller instanceof ListingPage_Controller)
 			{
-				$allParams = $controller->getRequest()->allParams();
-				$tagName = isset($allParams['Action']) ? $allParams['Action'] : null;
-
-				if ($tagName) {
-					$tags = $this->ComponentListingItems();
-					if ($tags) {
-						$tags = $tags->filter(array($this->ComponentFilterColumn => $tagName));
-						
-						$tags = $tags->toArray();
-						if (!$tags)
-						{
-							// Workaround cms/#1045
-			                // - Stop infinite redirect
-			                // @see: https://github.com/silverstripe/silverstripe-cms/issues/1045
-							unset($controller->extension_instances['OldPageRedirector']);
-
-							return $controller->httpError(404);
-						}
-					}
+				$tag = $controller->CurrentComponentFilterItem();
+				if ($tag) {
+					list($parentClass, $componentClass, $pageIDColumnName, $tagIDColumnName, $tagManyManyTable) = singleton($this->ListType)->manyManyComponent($this->ComponentFilterName);
+					$items = $items->innerJoin($tagManyManyTable, "\"{$pageIDColumnName}\" = \"$parentClass\".\"ID\" AND \"{$tagIDColumnName}\" = ".(int)$tag->ID);
 				}
-			}
-			
-			if ($tags) {
-				if (count($tags) > 1) {
-					return $controller->httpError(500, 'ComponentFilterColumn provided is not unique. '.count($tags).' matches found in query.');
-				}
-				$tag = reset($tags);
-
-				list($parentClass, $componentClass, $pageIDColumnName, $tagIDColumnName, $tagManyManyTable) = singleton($this->ListType)->manyManyComponent($this->ComponentFilterName);
-				$items = $items->innerJoin($tagManyManyTable, "\"{$pageIDColumnName}\" = \"$parentClass\".\"ID\" AND \"{$tagIDColumnName}\" = ".(int)$tag->ID);
-			} else {
-				$tags = new ArrayList();
 			}
 		}
 		
@@ -369,6 +345,9 @@ class ListingPage extends Page {
 		return static::render_listing_with_content($this, $this->ListingItems());
 	}
 
+	/**
+	 * @return string
+	 */
 	public static function render_listing_with_content($recordOrController, $list) {
 		$item = $recordOrController->customise(array('Items' => $list));
 		$view = SSViewer::fromString($recordOrController->ListingTemplate()->ItemTemplate);
@@ -378,22 +357,32 @@ class ListingPage extends Page {
 }
 
 class ListingPage_Controller extends Page_Controller {
+	/**
+	 * @var DataObject
+	 */
+	public $_CurrentComponentFilterItem = null;
+
 	public function handleRequest(SS_HTTPRequest $request, DataModel $model = NULL) {
 		$dirParts = explode('/', $request->remaining());
-		if (!$dirParts) {
-			return parent::handleRequest($request, $model);
-		}
-		$action = $dirParts[0];
-		if($this->hasAction($action)) {
+		$action = isset($dirParts[0]) ? $dirParts[0] : null;
+		if($action === null || $this->hasAction($action)) {
 			// Use existing action instead of tags
 			// ie. 'Form'
 			return parent::handleRequest($request, $model);
 		}
-		$tag = $this->ComponentListingItemByFilterColumn($action);
-		if ($tag) 
+		$tags = $this->ComponentListingItemsByFilterColumn($action);
+		if ($tags)
 		{
-			// If tag found, shift so that the request succeeds.
-			$request->shift();
+			$tags = $tags->toArray();
+			if ($tags) 
+			{
+				if (count($tags) > 1) {
+					throw new Exception('ComponentFilterColumn provided is not unique. '.count($tags).' matches found in query. Expected 1 match.');
+				}
+				// If tag found, shift so that the request succeeds.
+				$request->shift();
+				$this->_CurrentComponentFilterItem = reset($tags);
+			}
 		}
 		return parent::handleRequest($request, $model);
 	}
@@ -409,6 +398,22 @@ class ListingPage_Controller extends Page_Controller {
 		return array();
 	}
 
+	/**
+	 * @return DataObject
+	 */
+	public function CurrentComponentFilterItem() {
+		if ($this->_CurrentComponentFilterItem) {
+			return $this->_CurrentComponentFilterItem;
+		}
+		// NOTE: If using $CurrentComponentFilterItem.Name in a template and the value returns
+		//		 false, it will print 'CurrentComponentFilterItem' as plain text. Returning a
+		//		 blank ArrayData object stops that.
+		return new ArrayData(array());
+	}
+
+	/**
+	 * @return string
+	 */
 	public function Content() {
 		$allParams = $this->getRequest()->allParams();
 		$action = isset($allParams['Action']) ? $allParams['Action'] : null;
